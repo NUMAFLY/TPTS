@@ -1,11 +1,20 @@
 import urllib
 import os
-import time
 import datetime
 import hashlib
 import tweepy as tp
 import cv2
-import oauth  # oauth認証
+import oauth  # oauthの認証キー
+
+def get_oauth():
+    """oauth.pyのoauth_keysから各種キーを取得し、OAUTH認証を行う"""
+    consumer_key, consumer_secret = \
+        oauth.oauth_keys['CONSUMMER_KEY'], oauth.oauth_keys['CONSUMMER_SECRET']
+    access_key, access_secret = \
+        oauth.oauth_keys['ACCESS_TOKEN_KEY'], oauth.oauth_keys['ACCESS_TOKEN_SECRET']
+    auth = tp.OAuthHandler(consumer_key, consumer_secret)
+    auth.set_access_token(access_key, access_secret)
+    return auth
 
 class StreamListener(tp.StreamListener):
     # フォルダー作成用
@@ -24,11 +33,9 @@ class StreamListener(tp.StreamListener):
 
     def __init__(self, api=None):
         self.api = api or tp.API()
-        # 保存先作成
+        # 保存先
         self.old_date = datetime.date.today()
         self.mkdir()
-        # 顔検出器
-        self.cascade = cv2.CascadeClassifier("./lbpcascade_animeface.xml")
 
     def on_status(self, status):
         # Tweetに画像がついているか
@@ -50,7 +57,7 @@ class StreamListener(tp.StreamListener):
             if 'media' in status.entities:
                 status_media = status.entities
                 is_media = True
-
+        
         # 画像がついていたとき
         if is_media:
             # 自分のツイートは飛ばす
@@ -65,12 +72,12 @@ class StreamListener(tp.StreamListener):
                     # URL, ファイル名を取得
                     media_url = image['media_url']
                     root, ext = os.path.splitext(media_url)
-                    filename = str(self.fileno).zfill(10)
+                    filename = str(self.fileno).zfill(5)
                     # スクレイピングと顔検出
                     try:
                         urllib.request.urlretrieve(media_url, filename + ext)
                         # md5の取得
-                        f = open(filename + ext, "rb")
+                        f = open(filename + ext,"rb")
                         current_md5 = hashlib.md5(f.read()).hexdigest()
                         f.close()
                         # すでに取得済みの画像は飛ばす
@@ -79,50 +86,27 @@ class StreamListener(tp.StreamListener):
                                 is_geted = True
                                 break
                         if is_geted:
-                            print("geted : " + status.user.screen_name + "-" + filename + ext)
+                            print("geted : " + status.user.screen_name +"-" + filename + ext)
                             os.remove(filename + ext)
                             continue
                         image = cv2.imread(filename + ext)
-                        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-                        facerect = self.cascade.detectMultiScale(gray,\
-                                                                scaleFactor=1.11,\
-                                                                minNeighbors=2,\
-                                                                minSize=(128, 128))
-                        # 二次元の顔が検出できない場合
-                        if len(facerect) <= 0:
-                            print("skiped : " + status.user.screen_name +"-" + filename + ext)
-                        else:
-                            # 顔だけ切り出して保存
-                            for i, rect in enumerate(facerect):
-                                x, y, width, height = tuple(rect[0:4])
-                                dst = image[y:y+height, x:x+width]
-                                new_image_path = self.face_dir + filename + '_' + str(i) + ext
-                                cv2.imwrite(new_image_path, dst)
-                            # ユーザーフォルダーの確認と作成
-                            user_dir = status.user.screen_name + "/"
-                            if os.path.exists(self.raw_dir + user_dir) == False:
-                                os.mkdir(self.raw_dir + user_dir)
-                            # 画像本体を保存
-                            cv2.imwrite(self.raw_dir + user_dir + filename + ext, image)
-                            # 取得済みとしてMD5を保存
-                            self.file_md5.append(current_md5)
-                            print("saved : " + status.user.screen_name + "-" + filename + ext)
-                            self.fileno += 1
-                        # 元データの削除
+                        # 画像本体を保存
+                        cv2.imwrite(self.raw_dir + filename + ext, image)
+                        # 取得済みとしてMD5を保存
+                        self.file_md5.append(current_md5)
+                        print("saved : " + status.user.screen_name + "-" + filename + ext)
                         os.remove(filename + ext)
-                    except:
-                        print("FileGetError")
+                        self.fileno += 1
+                    except IOError:
+                        print("Error")
+
 
 def main():
-    auth = oauth.get_oauth()
+    auth = get_oauth()
+    tp.API(auth)
     print('Start Streaming!')
-    stream = tp.Stream(auth, StreamListener(api=tp.API(auth)), secure=True)
-    while(1):
-        try:
-            stream.userstream()
-        except:
-            print("Streaming Error")
-            time.sleep(60)
+    stream = tp.Stream(auth, StreamListener(), secure=True)
+    stream.userstream()
 
 if __name__ == '__main__':
     main()
