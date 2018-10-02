@@ -12,8 +12,7 @@ try:
     import dlib
     use_dlib = True
 except ImportError:
-    print("Please install dlib")
-    exit()
+    use_dlib = False
 
 class StreamListener(tp.StreamListener):
     def __init__(self, api):
@@ -23,8 +22,9 @@ class StreamListener(tp.StreamListener):
         self.old_date = datetime.date.today()
         self.mkdir()
         # 検出に必要なファイル
-        self.face_detector = dlib.simple_object_detector("detector_face.svm")
-        self.eye_detector = dlib.simple_object_detector("detector_eye.svm")
+        self.cascade = cv2.CascadeClassifier("lbpcascade_animeface.xml")
+        if use_dlib:
+            self.eye_detector = dlib.simple_object_detector("detector_eye.svm")
 
     def on_status(self, status):
         """UserStreamから飛んできたStatusを処理する"""
@@ -78,21 +78,34 @@ class StreamListener(tp.StreamListener):
                         print("geted  : " + status.user.screen_name +"-" + filename + ext)
                         continue
                     image = cv2.imdecode(np.asarray(bytearray(temp_file), dtype=np.uint8), 1)
-                    faces = self.face_detector(image)
+                    faces = self.cascade.detectMultiScale(image,\
+                                                        scaleFactor=1.11,\
+                                                        minNeighbors=2,\
+                                                        minSize=(64, 64))
                     # 二次元の顔が検出できない場合
                     if len(faces) <= 0:
                         print("skiped : " + status.user.screen_name + "-" + filename + ext)
                     else:
                         eye = False #目の状態
-                        # 顔だけ切り出して目の検索
-                        for i, area in enumerate(faces):
-                            face = image[area.top():area.bottom(), area.left():area.right()]
-                            # 出来た画像から目を検出
-                            eyes = self.eye_detector(face)
-                            if len(eyes) > 0:
-                                eye = True
+                        facex = []
+                        facey = []
+                        facew = []
+                        faceh = []
+                        if use_dlib:
+                            # 顔だけ切り出して目の検索
+                            for i, area in enumerate(faces):
+                                x, y, width, height = tuple(area[0:4])
+                                face = image[y:y+height, x:x+width]
+                                # 出来た画像から目を検出
+                                eyes = self.eye_detector(face)
+                                if len(eyes) > 0:
+                                    facex.append(x)
+                                    facey.append(y)
+                                    facew.append(width)
+                                    faceh.append(height)
+                                    eye = True
                         # 目があったなら画像本体を保存
-                        if eye:
+                        if use_dlib == False or eye:
                             # 保存
                             out = open(self.base_path + filename + ext, "wb")
                             out.write(temp_file)
@@ -109,7 +122,8 @@ class StreamListener(tp.StreamListener):
                             url = "https://twitter.com/" + status.user.screen_name + "/status/" + status.id_str
                             self.dbfile.execute("insert into list values('" + filename + ext + "','" + \
                                 status.user.screen_name + "','" + url + "'," + str(status.favorite_count) + "," + \
-                                str(status.retweet_count) + ",'" + str(tags).replace("'","") + "','" + str(datetime.datetime.now()) +"')")
+                                str(status.retweet_count) + ",'" + str(tags).replace("'","") + "','" + str(datetime.datetime.now()) + \
+                                "','" + str(facex) + "','" + str(facey) + "','" + str(facew) + "','" + str(faceh) +"')")
                             self.dbfile.commit()
                             print("saved  : " + status.user.screen_name + "-" + filename + ext)
                             if tags != []:
@@ -127,7 +141,7 @@ class StreamListener(tp.StreamListener):
         self.file_md5 = []
         self.dbfile = sqlite3.connect(self.base_path + "list.db")
         try:
-            self.dbfile.execute("create table list (filename, username, url, fav, retweet, tags, time)")
+            self.dbfile.execute("create table list (filename, username, url, fav, retweet, tags, time, facex, facey, facew, faceh)")
         except:
             None
 
